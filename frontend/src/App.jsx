@@ -153,8 +153,8 @@ function CauseSizeView() {
             scrollWheelZoom={true}
           >
             <TileLayer
-              url="https://stamen-tiles.a.ssl.fastly.net/terrain/{z}/{x}/{y}.png"
-              attribution='Map tiles by <a href="http://stamen.com">Stamen Design</a>, under <a href="http://creativecommons.org/licenses/by/3.0">CC BY 3.0</a>. Data by <a href="http://openstreetmap.org">OSM</a>, under ODbL.'
+              url="https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png"
+              attribution='Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, SRTM | Map style: &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)'
             />
             <LocationPicker
               onSelect={(c) => {
@@ -408,8 +408,8 @@ function FrequencyView() {
             scrollWheelZoom={true}
           >
             <TileLayer
-              url="https://stamen-tiles.a.ssl.fastly.net/terrain/{z}/{x}/{y}.png"
-              attribution='Map tiles by <a href="http://stamen.com">Stamen Design</a>, under <a href="http://creativecommons.org/licenses/by/3.0">CC BY 3.0</a>. Data by <a href="http://openstreetmap.org">OSM</a>, under ODbL.'
+              url="https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png"
+              attribution='Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, SRTM | Map style: &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)'
             />
           </MapContainer>
         </div>
