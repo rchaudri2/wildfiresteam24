@@ -152,7 +152,10 @@ function CauseSizeView() {
             className="map"
             scrollWheelZoom={true}
           >
-            <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+            <TileLayer
+              url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attribution/">CARTO</a>'
+            />
             <LocationPicker
               onSelect={(c) => {
                 setCoords(c);
@@ -404,7 +407,10 @@ function FrequencyView() {
             className="map"
             scrollWheelZoom={true}
           >
-            <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+            <TileLayer
+              url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attribution/">CARTO</a>'
+            />
           </MapContainer>
         </div>
 
