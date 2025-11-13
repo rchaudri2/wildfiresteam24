@@ -153,8 +153,8 @@ function CauseSizeView() {
             scrollWheelZoom={true}
           >
             <TileLayer
-              url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
-              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attribution/">CARTO</a>'
+              url="https://stamen-tiles.a.ssl.fastly.net/terrain/{z}/{x}/{y}.png"
+              attribution='Map tiles by <a href="http://stamen.com">Stamen Design</a>, under <a href="http://creativecommons.org/licenses/by/3.0">CC BY 3.0</a>. Data by <a href="http://openstreetmap.org">OSM</a>, under ODbL.'
             />
             <LocationPicker
               onSelect={(c) => {
@@ -408,8 +408,8 @@ function FrequencyView() {
             scrollWheelZoom={true}
           >
             <TileLayer
-              url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
-              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attribution/">CARTO</a>'
+              url="https://stamen-tiles.a.ssl.fastly.net/terrain/{z}/{x}/{y}.png"
+              attribution='Map tiles by <a href="http://stamen.com">Stamen Design</a>, under <a href="http://creativecommons.org/licenses/by/3.0">CC BY 3.0</a>. Data by <a href="http://openstreetmap.org">OSM</a>, under ODbL.'
             />
           </MapContainer>
         </div>
