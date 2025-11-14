@@ -1,9 +1,10 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { MapContainer, TileLayer, useMapEvents } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import {
   LineChart,
   Line,
+  ComposedChart,
   XAxis,
   YAxis,
   Tooltip,
@@ -11,6 +12,7 @@ import {
   ResponsiveContainer,
   ReferenceLine,
   ReferenceDot,
+  ReferenceArea,
   CartesianGrid,
   BarChart,
   Bar,
@@ -165,22 +167,50 @@ function LocationPicker({ onSelect }) {
   return null;
 }
 
-// Simple synthetic data generator for the frequency chart (placeholder)
-function useMockFrequencyData() {
-  return useMemo(() => {
-    const data = [];
-    for (let year = 1992; year <= 2035; year++) {
-      const base = 5000 + (year - 1992) * 120; // upward trend
-      const noise = ((year * 37) % 400) - 200;
-      const val = base + noise;
-      data.push({
-        year,
-        historical: year <= 2015 ? val : null,
-        forecast: year > 2015 ? val : null,
-      });
+// Fetch and cache the backend-provided fire frequency history/trendline.
+function useFrequencyHistory() {
+  const [payload, setPayload] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function fetchHistory() {
+      setLoading(true);
+      setError(null);
+      try {
+        const response = await fetch(`${API_BASE_URL}/frequency/history`);
+        if (!response.ok) {
+          throw new Error(`Request failed with status ${response.status}`);
+        }
+        const json = await response.json();
+        if (!cancelled) {
+          setPayload(json);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          const message =
+            err instanceof Error
+              ? err.message
+              : "Failed to load frequency history.";
+          setError(message);
+          setPayload(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
     }
-    return data;
+
+    fetchHistory();
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  return { payload, loading, error };
 }
 
 function CauseSizeView() {
@@ -824,56 +854,173 @@ function CauseSizeView() {
 }
 
 function FrequencyView() {
-  const data = useMockFrequencyData();
-  const [selectedYear, setSelectedYear] = useState(2025);
+  const { payload, loading, error } = useFrequencyHistory();
+  const [selectedYear, setSelectedYear] = useState(null);
+
+  const historyEndYear = payload?.history_end_year ?? null;
+  const projectionEndYear = payload?.projection_end_year ?? null;
+
+  const chartData = useMemo(() => {
+    if (!payload?.years || !payload?.trendline) {
+      return [];
+    }
+    const years = payload.years;
+    const counts = payload.counts ?? [];
+    const trendline = payload.trendline ?? [];
+    const rows = [];
+    for (let idx = 0; idx < years.length; idx++) {
+      const year = years[idx];
+      if (typeof year !== "number") continue;
+      const countValue =
+        idx < counts.length && typeof counts[idx] === "number"
+          ? counts[idx]
+          : null;
+      const cleanCount =
+        countValue !== null && Number.isFinite(countValue) ? countValue : null;
+      const trendValue =
+        idx < trendline.length && typeof trendline[idx] === "number"
+          ? trendline[idx]
+          : null;
+      const cleanTrend =
+        trendValue !== null && Number.isFinite(trendValue) ? trendValue : null;
+      const isHistoricalYear =
+        historyEndYear !== null ? year <= historyEndYear : cleanCount !== null;
+      const isProjectionYear =
+        historyEndYear !== null ? year > historyEndYear : cleanCount === null;
+      rows.push({
+        year,
+        count: isHistoricalYear ? cleanCount : null,
+        trendHistorical:
+          cleanTrend !== null && isHistoricalYear ? cleanTrend : null,
+        trendProjection:
+          cleanTrend !== null && isProjectionYear ? cleanTrend : null,
+        trendValue: cleanTrend,
+        isHistorical: isHistoricalYear,
+        isProjection: isProjectionYear,
+      });
+    }
+    return rows;
+  }, [payload, historyEndYear]);
+
+  const hasData = chartData.length > 0;
+  const sliderMin = hasData ? chartData[0].year : 1992;
+  const sliderMax = hasData ? chartData[chartData.length - 1].year : sliderMin;
+  const sliderValue = selectedYear ?? sliderMin;
+  const sliderDisabled = !hasData || loading;
+
+  useEffect(() => {
+    if (!chartData.length) return;
+    const minYear = chartData[0].year;
+    const maxYear = chartData[chartData.length - 1].year;
+    setSelectedYear((current) => {
+      if (current === null) {
+        if (
+          historyEndYear !== null &&
+          historyEndYear >= minYear &&
+          historyEndYear <= maxYear
+        ) {
+          return historyEndYear;
+        }
+        return maxYear;
+      }
+      if (current < minYear) return minYear;
+      if (current > maxYear) return maxYear;
+      return current;
+    });
+  }, [chartData, historyEndYear]);
 
   const handleChange = (e) => {
+    if (sliderDisabled) return;
     setSelectedYear(Number(e.target.value));
   };
 
-  const selectedPoint = data.find((d) => d.year === selectedYear);
-  const selectedValue =
-    selectedPoint?.forecast ?? selectedPoint?.historical ?? null;
-  const baselinePoint = data.find((d) => d.year === 1992);
-  const baselineValue =
-    baselinePoint?.historical ?? baselinePoint?.forecast ?? null;
-  const percentChange =
-    selectedValue !== null && baselineValue
-      ? ((selectedValue - baselineValue) / baselineValue) * 100
+  const selectedPoint = chartData.find((d) => d.year === sliderValue);
+  const selectedCount =
+    typeof selectedPoint?.count === "number" ? selectedPoint.count : null;
+  const selectedTrend =
+    typeof selectedPoint?.trendHistorical === "number"
+      ? selectedPoint.trendHistorical
+      : typeof selectedPoint?.trendProjection === "number"
+      ? selectedPoint.trendProjection
       : null;
-  const historicalPoints = data.filter((d) => d.historical);
+  const selectedValue = selectedCount ?? selectedTrend ?? null;
+  const hasSelection = selectedValue !== null;
+  const trendLabel =
+    loading && !hasSelection
+      ? "Loading"
+      : selectedPoint?.isProjection
+      ? "Projection"
+      : selectedCount !== null
+      ? "Observed"
+      : "Regression";
+  const trendClass =
+    trendLabel === "Projection"
+      ? "projection"
+      : trendLabel === "Observed"
+      ? "historical"
+      : "forecast";
+
+  const baselinePoint = chartData[0];
+  const baselineValue =
+    typeof baselinePoint?.count === "number"
+      ? baselinePoint.count
+      : typeof baselinePoint?.trendHistorical === "number"
+      ? baselinePoint.trendHistorical
+      : null;
+  const canCompare =
+    baselineValue !== null &&
+    typeof baselineValue === "number" &&
+    baselineValue !== 0 &&
+    hasSelection;
+  const percentChange = canCompare
+    ? ((selectedValue - baselineValue) / baselineValue) * 100
+    : null;
+  const formattedPercentChange =
+    percentChange !== null
+      ? `${percentChange >= 0 ? "+" : ""}${percentChange.toFixed(1)}%`
+      : "-";
+  const baselineLabel = baselinePoint
+    ? baselineValue !== null
+      ? `${formatNumber(baselineValue)} fires in ${baselinePoint.year}`
+      : `No record for ${baselinePoint.year}`
+    : "Baseline unavailable";
+
+  const historicalPoints = chartData.filter((point) => point.count !== null);
   const avgHistorical =
     historicalPoints.length > 0
       ? Math.round(
-          historicalPoints.reduce((sum, d) => sum + d.historical, 0) /
+          historicalPoints.reduce((sum, point) => sum + point.count, 0) /
             historicalPoints.length
         )
       : null;
   const peakHistorical = historicalPoints.reduce(
     (acc, point) => {
-      if (!acc || point.historical > acc.value) {
-        return { year: point.year, value: point.historical };
+      if (!acc || point.count > acc.value) {
+        return { year: point.year, value: point.count };
       }
       return acc;
     },
     null
   );
-  const forecast2030 =
-    data.find((d) => d.year === 2030)?.forecast ?? selectedValue;
-  const trendLabel = selectedYear > 2015 ? "Forecast" : "Historical";
-  const trendClass = trendLabel === "Forecast" ? "forecast" : "historical";
-  const formattedPercentChange =
-    percentChange !== null
-      ? `${percentChange >= 0 ? "+" : ""}${percentChange.toFixed(1)}%`
-      : "-";
-  const baselineLabel = baselineValue
-    ? `${formatNumber(baselineValue)} fires in 1992`
-    : "Baseline unavailable";
+  const historyRangeLabel =
+    historicalPoints.length > 0
+      ? `${historicalPoints[0].year}-${
+          historicalPoints[historicalPoints.length - 1].year
+        }`
+      : "No observed history";
+  const projectionRangeLabel =
+    historyEndYear !== null && projectionEndYear !== null
+      ? `${historyEndYear + 1}-${projectionEndYear}`
+      : "Awaiting projection";
+
   const contextStats = [
     {
-      label: "Avg 1992-2015",
+      label: "Observed Avg",
       value: avgHistorical ? formatNumber(avgHistorical) : "-",
-      detail: "Observed baseline",
+      detail:
+        historicalPoints.length > 0
+          ? `Observed ${historyRangeLabel}`
+          : "Observed counts unavailable",
     },
     {
       label: peakHistorical
@@ -883,11 +1030,43 @@ function FrequencyView() {
       detail: "Highest recorded fires",
     },
     {
-      label: "2030 Outlook",
-      value: forecast2030 ? formatNumber(forecast2030) : "-",
-      detail: "Projected guidance",
+      label: "Projection Window",
+      value:
+        historyEndYear !== null && projectionEndYear !== null
+          ? `${historyEndYear + 1}-${projectionEndYear}`
+          : projectionRangeLabel,
+      detail: "Regression outlook horizon",
     },
   ];
+
+  const selectedFootnote = !hasSelection
+    ? "Waiting for backend data"
+    : selectedPoint?.isProjection
+    ? "Future regression estimate"
+    : "Observed wildfire incidents";
+
+  const statusText = error
+    ? "Unable to reach backend frequency endpoint."
+    : loading
+    ? "Loading backend regression output..."
+    : historyEndYear !== null && projectionEndYear !== null
+    ? `History through ${historyEndYear}, projections through ${projectionEndYear}.`
+    : "Live regression and history pulled from backend.";
+
+  const chartPlaceholderMessage = loading
+    ? "Loading frequency history..."
+    : error
+    ? "Unable to load frequency data."
+    : "Frequency history unavailable.";
+
+  const projectionBandStart =
+    historyEndYear !== null ? historyEndYear + 0.5 : null;
+  const projectionBandEnd =
+    projectionEndYear !== null ? projectionEndYear + 0.5 : null;
+  const showProjectionBand =
+    projectionBandStart !== null &&
+    projectionBandEnd !== null &&
+    projectionBandEnd > projectionBandStart;
 
   return (
     <div className="page">
@@ -898,41 +1077,44 @@ function FrequencyView() {
             <span className={`badge ${trendClass}`}>{trendLabel}</span>
           </div>
           <div className="slider-readout">
-            <span className="year-value">{selectedYear}</span>
+            <span className="year-value">{hasData ? sliderValue : "-"}</span>
             <span className="slider-sub">
-              {trendLabel === "Forecast"
-                ? "Model outlook for future seasons"
-                : "Observed historical record"}
+              {!hasData
+                ? "Waiting for backend data"
+                : trendLabel === "Projection"
+                ? "Forward-looking regression"
+                : trendLabel === "Observed"
+                ? "Observed historical record"
+                : "Regression fit"}
             </span>
           </div>
           <input
             className="year-slider"
             type="range"
-            min={1992}
-            max={2035}
-            value={selectedYear}
+            min={sliderMin}
+            max={sliderMax}
+            value={sliderValue}
             onChange={handleChange}
-            aria-valuemin={1992}
-            aria-valuemax={2035}
-            aria-valuenow={selectedYear}
+            disabled={sliderDisabled}
+            aria-valuemin={sliderMin}
+            aria-valuemax={sliderMax}
+            aria-valuenow={sliderValue}
             aria-label="Prediction year"
           />
           <div className="range-labels">
-            <span>1992</span>
-            <span>2015</span>
-            <span>2035</span>
+            <span>{sliderMin}</span>
+            <span>{historyEndYear ?? "-"}</span>
+            <span>{sliderMax}</span>
           </div>
         </div>
         <div className="control-card instructions">
           <div className="label">How to use</div>
           <ol>
             <li>Drag the slider to choose a year.</li>
+            <li>Blue bars show observed counts captured by the backend.</li>
             <li>
-              The line chart shows historical (blue) and forecast (red) counts.
-            </li>
-            <li>
-              Predictions will come from the linear regression backend once
-              connected.
+              Solid orange line fits history; the dashed line extends the
+              regression into the projection window.
             </li>
           </ol>
         </div>
@@ -962,98 +1144,144 @@ function FrequencyView() {
         <div className="right-panel">
           <div className="card">
             <div className="panel-header">
-              <div className="panel-title">
-                Fire Frequency Over Time (placeholder)
-              </div>
+              <div className="panel-title">Fire Frequency Over Time</div>
               <div className="panel-subtitle">
-                Historical vs. forecasted wildfires, illustrative only.
+                Observed counts with backend regression and projection band.
               </div>
             </div>
             <div className="chart-wrapper">
-              <ResponsiveContainer width="100%" height={260}>
-                <LineChart
-                  data={data}
-                  margin={{ left: 8, right: 24, top: 8, bottom: 20 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis
-                    dataKey="year"
-                    axisLine={false}
-                    tickLine={false}
-                    tick={{ fill: "#475569", fontSize: 12 }}
-                  />
-                  <YAxis
-                    axisLine={false}
-                    tickLine={false}
-                    tickFormatter={(value) => value.toLocaleString()}
-                    tick={{ fill: "#475569", fontSize: 12 }}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      background: "#0f172a",
-                      borderRadius: 12,
-                      border: "none",
-                      color: "#f8fafc",
-                    }}
-                    labelStyle={{ color: "#cbd5f5" }}
-                    formatter={(value, name) => [
-                      `${Math.round(value).toLocaleString()} fires`,
-                      name,
-                    ]}
-                  />
-                  <Legend
-                    verticalAlign="top"
-                    height={36}
-                    iconType="circle"
-                    wrapperStyle={{ paddingBottom: 12 }}
-                  />
-                  <ReferenceLine
-                    x={selectedYear}
-                    stroke="#0f172a"
-                    strokeDasharray="6 6"
-                    strokeWidth={2}
-                    label={{
-                      value: selectedYear,
-                      position: "bottom",
-                      fill: "#0f172a",
-                      fontSize: 12,
-                    }}
-                  />
-                  {selectedValue !== null && (
-                    <ReferenceDot
-                      x={selectedYear}
-                      y={selectedValue}
-                      r={5}
-                      fill="#111827"
-                      stroke="#ffffff"
-                      strokeWidth={2}
+              {hasData ? (
+                <ResponsiveContainer width="100%" height={260}>
+                  <ComposedChart
+                    data={chartData}
+                    margin={{ left: 8, right: 24, top: 8, bottom: 20 }}
+                  >
+                    <defs>
+                      <linearGradient id="freqBarGradient" x1="0" x2="0" y1="0" y2="1">
+                        <stop offset="0%" stopColor="#93c5fd" stopOpacity={0.95} />
+                        <stop offset="100%" stopColor="#1d4ed8" stopOpacity={0.85} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                    <XAxis
+                      dataKey="year"
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fill: "#475569", fontSize: 12 }}
                     />
-                  )}
-                  <Line
-                    type="monotone"
-                    dataKey="historical"
-                    name="Historical"
-                    stroke="#2563eb"
-                    strokeWidth={3}
-                    dot={false}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="forecast"
-                    name="Forecast"
-                    stroke="#f97316"
-                    strokeWidth={3}
-                    dot={false}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
+                    <YAxis
+                      axisLine={false}
+                      tickLine={false}
+                      tickFormatter={(value) =>
+                        typeof value === "number"
+                          ? value.toLocaleString()
+                          : value
+                      }
+                      tick={{ fill: "#475569", fontSize: 12 }}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        background: "#0f172a",
+                        borderRadius: 12,
+                        border: "none",
+                        color: "#f8fafc",
+                      }}
+                      labelStyle={{ color: "#cbd5f5" }}
+                      formatter={(value, name) => {
+                        if (typeof value !== "number") {
+                          return ["-", name];
+                        }
+                        return [
+                          `${Math.round(value).toLocaleString()} fires`,
+                          name,
+                        ];
+                      }}
+                    />
+                    <Legend
+                      verticalAlign="top"
+                      height={36}
+                      iconType="circle"
+                      wrapperStyle={{ paddingBottom: 12 }}
+                    />
+                    {showProjectionBand && (
+                      <ReferenceArea
+                        x1={projectionBandStart}
+                        x2={projectionBandEnd}
+                        fill="rgba(249, 115, 22, 0.08)"
+                        stroke={null}
+                      />
+                    )}
+                    {selectedYear !== null && (
+                      <ReferenceLine
+                        x={sliderValue}
+                        stroke="#0f172a"
+                        strokeDasharray="6 6"
+                        strokeWidth={2}
+                        label={{
+                          value: sliderValue,
+                          position: "bottom",
+                          fill: "#0f172a",
+                          fontSize: 12,
+                        }}
+                      />
+                    )}
+                    {hasSelection && selectedYear !== null && (
+                      <ReferenceDot
+                        x={sliderValue}
+                        y={selectedValue}
+                        r={5}
+                        fill="#111827"
+                        stroke="#ffffff"
+                        strokeWidth={2}
+                      />
+                    )}
+                    <Bar
+                      dataKey="count"
+                      name="Observed fires"
+                      fill="url(#freqBarGradient)"
+                      stroke="#1d4ed8"
+                      barSize={20}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="trendHistorical"
+                      name="Trend (observed fit)"
+                      stroke="#f97316"
+                      strokeWidth={3}
+                      dot={false}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="trendProjection"
+                      name="Trend (projection)"
+                      stroke="#fb923c"
+                      strokeWidth={3}
+                      strokeDasharray="6 4"
+                      dot={false}
+                    />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              ) : (
+                <div
+                  style={{
+                    height: 260,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "#475569",
+                    fontSize: 14,
+                  }}
+                >
+                  {chartPlaceholderMessage}
+                </div>
+              )}
             </div>
           </div>
 
           <div className="card summary-cards">
             <div className="summary-card highlight-card">
               <div className="label">Selected Year</div>
-              <div className="summary-value xl">{selectedYear}</div>
+              <div className="summary-value xl">{hasData ? sliderValue : "-"}</div>
               <span className={`badge ${trendClass}`}>{trendLabel}</span>
             </div>
             <div className="summary-card">
@@ -1061,20 +1289,16 @@ function FrequencyView() {
               <div className="summary-value">
                 {selectedValue !== null ? formatNumber(selectedValue) : "-"}
               </div>
-              <div className="summary-footnote">
-                Slider-controlled mock output
-              </div>
+              <div className="summary-footnote">{selectedFootnote}</div>
             </div>
             <div className="summary-card">
-              <div className="label">% Change vs 1992</div>
+              <div className="label">% Change vs {baselinePoint?.year ?? "baseline"}</div>
               <div className="summary-value">{formattedPercentChange}</div>
               <div className="summary-footnote">{baselineLabel}</div>
             </div>
             <div className="summary-card note-card">
               <div className="label">Status</div>
-              <div className="summary-value small">
-                Backend not connected. Numbers are illustrative mock values.
-              </div>
+              <div className="summary-value small">{statusText}</div>
             </div>
           </div>
 
@@ -1092,7 +1316,6 @@ function FrequencyView() {
     </div>
   );
 }
-
 export default function App() {
   const [tab, setTab] = useState("cause");
 
@@ -1122,3 +1345,5 @@ export default function App() {
     </div>
   );
 }
+
+

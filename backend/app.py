@@ -1,5 +1,5 @@
 
-from typing import List, Dict, Tuple, Sequence, Any
+from typing import List, Dict, Tuple, Sequence, Any, Optional
 
 import pickle
 import numpy as np
@@ -7,6 +7,7 @@ import pandas as pd
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, validator
+import statsmodels.api as sm
 
 from model_loader import ensure_models
 
@@ -76,6 +77,8 @@ app.add_middleware(
 
 cause_model = pickle.load(open("models/CAUSE_MODEL.pkl", "rb"))
 size_model = pickle.load(open("models/SIZE_MODEL.pkl", "rb"))
+_frequency_bundle: Optional[Dict[str, Any]] = None
+DEFAULT_PROJECTION_YEARS = 15
 
 CAUSE_FEATURE_COLUMNS = ["DISCOVERY_MONTH", "LATITUDE", "LONGITUDE", "STATE"]
 SIZE_FEATURE_COLUMNS = [
@@ -152,6 +155,77 @@ def _build_size_features(
     for column in SIZE_CATEGORICAL_COLUMNS:
         frame[column] = frame[column].astype("category")
     return frame
+
+
+def _load_frequency_bundle() -> Dict[str, Any]:
+    global _frequency_bundle
+    if _frequency_bundle is None:
+        with open("models/FREQUENCY_MODEL.pkl", "rb") as freq_file:
+            _frequency_bundle = pickle.load(freq_file)
+    return _frequency_bundle
+
+
+def _coerce_list(value: Any) -> List[Any]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if hasattr(value, "tolist"):
+        return value.tolist()
+    if isinstance(value, (tuple, set)):
+        return list(value)
+    return [value]
+
+
+def _replace_nan(values: Sequence[Any]) -> List[Optional[float]]:
+    cleaned: List[Optional[float]] = []
+    for value in values:
+        if value is None:
+            cleaned.append(None)
+            continue
+        numeric = float(value)
+        if np.isnan(numeric):
+            cleaned.append(None)
+        else:
+            cleaned.append(numeric)
+    return cleaned
+
+
+def _next_projection_years(
+    years: np.ndarray, bundle: Dict[str, Any]
+) -> np.ndarray:
+    if years.size == 0:
+        return np.array([], dtype=float)
+    candidate = (
+        bundle.get("future_years")
+        or bundle.get("projection_years")
+        or bundle.get("forecast_years")
+    )
+    if candidate is None:
+        max_year = float(np.nanmax(years))
+        return np.arange(
+            max_year + 1,
+            max_year + DEFAULT_PROJECTION_YEARS + 1,
+            dtype=float,
+        )
+    arr = np.asarray(_coerce_list(candidate), dtype=float)
+    arr = arr[np.isfinite(arr)]
+    if arr.size == 0:
+        max_year = float(np.nanmax(years))
+        return np.arange(
+            max_year + 1,
+            max_year + DEFAULT_PROJECTION_YEARS + 1,
+            dtype=float,
+        )
+    max_year = float(np.nanmax(years))
+    arr = arr[arr > max_year]
+    if arr.size == 0:
+        return np.arange(
+            max_year + 1,
+            max_year + DEFAULT_PROJECTION_YEARS + 1,
+            dtype=float,
+        )
+    return np.unique(arr)
 
 
 def _extract_probabilities(
@@ -275,3 +349,67 @@ def predict(inp: PredictionInput):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # pragma: no cover - safeguard for unexpected failures
         raise HTTPException(status_code=500, detail="Model inference failed.") from exc
+
+
+@app.get("/frequency/history")
+def frequency_history():
+    try:
+        bundle = _load_frequency_bundle()
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Frequency model not found. Upload FREQUENCY_MODEL.pkl to /models.",
+        ) from exc
+    except Exception as exc:  # pragma: no cover - guard unexpected bundle issues
+        raise HTTPException(
+            status_code=500, detail="Unable to load frequency model bundle."
+        ) from exc
+
+    model = bundle.get("model")
+    years = np.asarray(_coerce_list(bundle.get("years")), dtype=float)
+    counts = np.asarray(_coerce_list(bundle.get("counts")), dtype=float)
+    if model is None or years.size == 0 or counts.size == 0:
+        raise HTTPException(
+            status_code=500, detail="Frequency bundle is missing required fields."
+        )
+
+    if years.size != counts.size:
+        raise HTTPException(
+            status_code=500,
+            detail="Frequency bundle has inconsistent years/counts lengths.",
+        )
+
+    order = np.argsort(years)
+    years = years[order]
+    counts = counts[order]
+
+    observed_mask = ~np.isnan(counts)
+    history_end_year: Optional[int] = (
+        int(round(float(years[observed_mask][-1]))) if observed_mask.any() else None
+    )
+
+    projection_years = _next_projection_years(years, bundle)
+    if projection_years.size > 0:
+        years = np.concatenate([years, projection_years])
+        counts = np.concatenate(
+            [counts, np.full(shape=(projection_years.size,), fill_value=np.nan)]
+        )
+
+    X = sm.add_constant(years, has_constant="add")
+    fitted = np.asarray(model.predict(X), dtype=float)
+
+    projection_end_year: Optional[int] = (
+        int(round(float(years[-1]))) if years.size > 0 else None
+    )
+
+    years_payload = [int(round(year)) for year in years]
+    counts_payload = _replace_nan(counts)
+    trend_payload = _replace_nan(fitted)
+
+    return {
+        "years": years_payload,
+        "counts": counts_payload,
+        "trendline": trend_payload,
+        "history_end_year": history_end_year,
+        "projection_end_year": projection_end_year,
+    }

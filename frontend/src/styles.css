@@ -600,6 +600,11 @@ html {
   color: #1d4ed8;
 }
 
+.badge.projection {
+  background: rgba(249, 115, 22, 0.18);
+  color: #c2410c;
+}
+
 .stat-tiles {
   margin-top: 10px;
   display: grid;
