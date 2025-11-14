@@ -1,8 +1,9 @@
 
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Sequence, Any
 
 import pickle
 import numpy as np
+import pandas as pd
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, validator
@@ -76,6 +77,16 @@ app.add_middleware(
 cause_model = pickle.load(open("models/CAUSE_MODEL.pkl", "rb"))
 size_model = pickle.load(open("models/SIZE_MODEL.pkl", "rb"))
 
+CAUSE_FEATURE_COLUMNS = ["DISCOVERY_MONTH", "LATITUDE", "LONGITUDE", "STATE"]
+SIZE_FEATURE_COLUMNS = [
+    "DISCOVERY_MONTH",
+    "LATITUDE",
+    "LONGITUDE",
+    "STATE",
+    "STAT_CAUSE_DESCR",
+]
+SIZE_CATEGORICAL_COLUMNS = ["STATE", "STAT_CAUSE_DESCR"]
+
 
 class PredictionInput(BaseModel):
     lat: float
@@ -109,20 +120,49 @@ class PredictionInput(BaseModel):
         return cleaned
 
 
-def _build_cause_features(inp: PredictionInput) -> List[List]:
-    return [[inp.month, inp.lat, inp.lon, inp.state]]
+def _build_cause_features(inp: PredictionInput) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "DISCOVERY_MONTH": inp.month,
+                "LATITUDE": inp.lat,
+                "LONGITUDE": inp.lon,
+                "STATE": inp.state,
+            }
+        ],
+        columns=CAUSE_FEATURE_COLUMNS,
+    )
 
 
-def _build_size_features(inp: PredictionInput, inferred_cause: str) -> List[List]:
-    return [[inp.month, inp.lat, inp.lon, inp.state, inferred_cause]]
+def _build_size_features(
+    inp: PredictionInput, inferred_cause: str
+) -> pd.DataFrame:
+    frame = pd.DataFrame(
+        [
+            {
+                "DISCOVERY_MONTH": inp.month,
+                "LATITUDE": inp.lat,
+                "LONGITUDE": inp.lon,
+                "STATE": inp.state,
+                "STAT_CAUSE_DESCR": inferred_cause,
+            }
+        ],
+        columns=SIZE_FEATURE_COLUMNS,
+    )
+    for column in SIZE_CATEGORICAL_COLUMNS:
+        frame[column] = frame[column].astype("category")
+    return frame
 
 
-def _extract_probabilities(row: np.ndarray, labels: List[str]) -> List[Dict[str, float]]:
+def _extract_probabilities(
+    row: Sequence[Any], labels: Sequence[Any]
+) -> List[Dict[str, float]]:
     if row is None or labels is None:
         return []
+    np_row = np.array(row).astype(float).flatten()
     output = [
         {"label": str(label), "probability": float(prob)}
-        for label, prob in zip(labels, row)
+        for label, prob in zip(labels, np_row)
     ]
     output.sort(key=lambda item: item["probability"], reverse=True)
     return output
@@ -135,24 +175,74 @@ def _estimate_bounds(acres: float) -> Tuple[float, float]:
     return (lower, upper)
 
 
+def _predict_sizes_for_causes(
+    inp: PredictionInput, probabilities: List[Dict[str, float]], limit: int = 4
+) -> List[Dict[str, float]]:
+    results: List[Dict[str, float]] = []
+    for index, entry in enumerate(probabilities):
+        if limit and index >= limit:
+            break
+        label = entry["label"]
+        size_features = _build_size_features(inp, label)
+        log_pred = size_model.predict(size_features)[0]
+        size_acres = max(0.0, float(np.expm1(log_pred)))
+        min_acres, max_acres = _estimate_bounds(size_acres)
+        results.append(
+            {
+                "label": label,
+                "probability": entry["probability"],
+                "expected_acres": size_acres,
+                "min_acres": min_acres,
+                "max_acres": max_acres,
+            }
+        )
+    return results
+
+
 @app.post("/predict")
 def predict(inp: PredictionInput):
     try:
         cause_features = _build_cause_features(inp)
-        cause_pred = cause_model.predict(cause_features)[0]
+        cause_raw = cause_model.predict(cause_features)
+        cause_value = cause_raw
+        if isinstance(cause_raw, np.ndarray):
+            cause_value = cause_raw.flatten()[0]
+        elif isinstance(cause_raw, (list, tuple)):
+            cause_value = cause_raw[0]
+        cause_pred = str(cause_value)
         cause_probabilities: List[Dict[str, float]] = []
         if hasattr(cause_model, "predict_proba"):
             raw_proba = cause_model.predict_proba(cause_features)
-            labels = getattr(cause_model, "classes_", None) or getattr(
-                cause_model, "class_names_", None
-            )
-            if raw_proba is not None and len(raw_proba) > 0 and labels is not None:
+            labels = getattr(cause_model, "classes_", None)
+            if labels is None:
+                labels = getattr(cause_model, "class_names_", None)
+            if (
+                raw_proba is not None
+                and len(raw_proba) > 0
+                and labels is not None
+                and len(labels) > 0
+            ):
                 cause_probabilities = _extract_probabilities(raw_proba[0], labels)
+        if not cause_probabilities:
+            cause_probabilities = [{"label": cause_pred, "probability": 1.0}]
 
-        size_features = _build_size_features(inp, cause_pred)
-        log_pred = size_model.predict(size_features)[0]
-        size_acres = max(0.0, float(np.expm1(log_pred)))
-        min_acres, max_acres = _estimate_bounds(size_acres)
+        sizes_by_cause = _predict_sizes_for_causes(inp, cause_probabilities, limit=4)
+        top_size_entry = sizes_by_cause[0] if sizes_by_cause else None
+        top_expected = (
+            top_size_entry["expected_acres"]
+            if top_size_entry and "expected_acres" in top_size_entry
+            else None
+        )
+        top_min = (
+            top_size_entry["min_acres"]
+            if top_size_entry and "min_acres" in top_size_entry
+            else None
+        )
+        top_max = (
+            top_size_entry["max_acres"]
+            if top_size_entry and "max_acres" in top_size_entry
+            else None
+        )
 
         response = {
             "inputs": {
@@ -162,18 +252,23 @@ def predict(inp: PredictionInput):
                 "state": inp.state,
             },
             "cause": {
-                "label": str(cause_pred),
+                "label": str(top_size_entry["label"])
+                if top_size_entry
+                else str(cause_pred),
                 "probabilities": cause_probabilities,
             },
             "size": {
-                "expected_acres": size_acres,
-                "min_acres": min_acres,
-                "max_acres": max_acres,
+                "expected_acres": top_expected,
+                "min_acres": top_min,
+                "max_acres": top_max,
             },
-            "predicted_cause": str(cause_pred),
-            "predicted_size_acres": size_acres,
-            "size_min_acres": min_acres,
-            "size_max_acres": max_acres,
+            "sizes_by_cause": sizes_by_cause,
+            "predicted_cause": str(
+                top_size_entry["label"] if top_size_entry else cause_pred
+            ),
+            "predicted_size_acres": top_expected,
+            "size_min_acres": top_min,
+            "size_max_acres": top_max,
         }
         return response
     except ValueError as exc:

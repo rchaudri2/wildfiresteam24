@@ -8,6 +8,10 @@ html,
   color: #0f172a;
 }
 
+html {
+  scroll-padding-top: 120px;
+}
+
 .layout {
   display: flex;
   flex-direction: column;
@@ -69,10 +73,10 @@ html,
 }
 
 .page {
-  padding: 20px 32px 28px;
+  padding: 36px 24px 20px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
   height: 100%;
   box-sizing: border-box;
   width: min(1400px, 100%);
@@ -81,30 +85,32 @@ html,
 
 @media (max-width: 900px) {
   .page {
-    padding: 16px;
+    padding: 44px 14px 16px;
   }
 }
 
 .controls-row {
   display: flex;
-  gap: 12px;
   flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+  margin-bottom: 2px;
 }
 
 .control-card {
   background: linear-gradient(135deg, #ffffff, #f8fafc);
-  border-radius: 16px;
-  padding: 12px 16px;
-  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08);
-  border: 1px solid #e5e7eb;
-  min-width: 220px;
+  border-radius: 14px;
+  padding: 10px 12px;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+  border: 1px solid #e3e8ef;
+  min-width: 200px;
   flex: 1;
 }
 
 .control-card select,
 .control-card input[type="range"] {
   width: 100%;
-  margin-top: 6px;
+  margin-top: 4px;
 }
 
 .map-toggle {
@@ -229,10 +235,11 @@ html,
 
 .content-row {
   display: flex;
-  gap: 14px;
+  gap: 12px;
   flex: 1;
   min-height: 0;
   align-items: stretch;
+  margin-top: 8px;
 }
 
 .card {
@@ -249,11 +256,16 @@ html,
   flex-direction: column;
   min-width: 0;
   gap: 10px;
+  scroll-margin-top: 120px;
+}
+
+.map-panel.card {
+  margin-top: 12px;
 }
 
 .map {
   width: 100%;
-  height: 360px;
+  height: 300px;
   border-radius: 12px;
   overflow: hidden;
   margin-top: 4px;
@@ -262,7 +274,7 @@ html,
 
 @media (max-width: 1200px) {
   .map {
-    height: 300px;
+    height: 260px;
   }
 }
 
@@ -402,17 +414,44 @@ html,
   text-align: right;
 }
 
+.cause-size {
+  display: block;
+  font-size: 11px;
+  color: #64748b;
+  font-weight: 500;
+  margin-top: 4px;
+}
+
+.cause-chart {
+  width: 100%;
+  height: 190px;
+}
+
+.cause-chart-footnote {
+  font-size: 12px;
+  color: #475569;
+  margin-top: 4px;
+  font-weight: 500;
+}
+
 .size-metrics {
   margin-top: 4px;
 }
 
+.size-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .size-main {
-  margin-top: 12px;
-  margin-bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .size-value {
-  font-size: 28px;
+  font-size: 32px;
   font-weight: 700;
   color: #111827;
 }
@@ -420,6 +459,19 @@ html,
 .size-label {
   font-size: 12px;
   color: #6b7280;
+}
+
+.size-chart {
+  width: 100%;
+  height: 190px;
+}
+
+.size-chart-footnote {
+  font-size: 12px;
+  color: #475569;
+  margin-top: 4px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
 }
 
 .metric {

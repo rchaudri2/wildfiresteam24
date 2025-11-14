@@ -12,6 +12,10 @@ import {
   ReferenceLine,
   ReferenceDot,
   CartesianGrid,
+  BarChart,
+  Bar,
+  ErrorBar,
+  LabelList,
 } from "recharts";
 
 const MONTHS = [
@@ -111,9 +115,9 @@ const PLACEHOLDER_CAUSES = [
 ];
 
 const PERFORMANCE_METRICS = [
-  { label: "Precision", value: 84.2 },
-  { label: "Recall", value: 82.8 },
-  { label: "F1 Score", value: 83.5 },
+  { label: "Precision", value: 48.0 },
+  { label: "Recall", value: 35.0 },
+  { label: "F1 Score", value: 38.0 },
 ];
 
 const SIZE_PLACEHOLDER = {
@@ -139,6 +143,16 @@ const INPUT_CHANGED_MESSAGE =
 const formatNumber = (value) => {
   if (value === null || value === undefined) return "-";
   return Math.round(value).toLocaleString();
+};
+
+const formatAcres = (value) => {
+  if (value === null || value === undefined) return "-";
+  const numeric = Number(value);
+  if (Number.isNaN(numeric)) return "-";
+  return numeric.toLocaleString(undefined, {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  });
 };
 
 function LocationPicker({ onSelect }) {
@@ -190,25 +204,94 @@ function CauseSizeView() {
   const hasPrediction = Boolean(prediction);
   const backendCauseProbabilities =
     prediction?.cause?.probabilities ?? prediction?.cause_probabilities ?? [];
-  const normalizedCauses = backendCauseProbabilities
+  const sizesByCause = prediction?.sizes_by_cause ?? [];
+  const rawCauseEntries =
+    sizesByCause.length > 0 ? sizesByCause : backendCauseProbabilities;
+  const normalizedCauses = rawCauseEntries
     .map((item) => {
-      const probability =
+      const probabilityFraction =
         typeof item.probability === "number"
-          ? item.probability * 100
+          ? item.probability
           : typeof item.value === "number"
-          ? item.value
+          ? item.value / 100
           : 0;
       return {
         label: item.label ?? item.cause ?? "Unlabeled cause",
-        value: Math.max(0, Math.min(100, Math.round(probability))),
+        probability: Math.max(
+          0,
+          Math.min(1, Number.isFinite(probabilityFraction) ? probabilityFraction : 0)
+        ),
+        expected_acres:
+          typeof item.expected_acres === "number" ? item.expected_acres : null,
+        min_acres: typeof item.min_acres === "number" ? item.min_acres : null,
+        max_acres: typeof item.max_acres === "number" ? item.max_acres : null,
       };
     })
-    .filter((item) => item.value > 0);
+    .filter((item) => item.probability > 0);
   const displayedCauses =
     normalizedCauses.length > 0
-      ? normalizedCauses.slice(0, 4)
-      : PLACEHOLDER_CAUSES;
-  const sizeResult = prediction?.size ?? null;
+      ? normalizedCauses.slice(0, 4).map((item) => {
+          const acresValue =
+            typeof item.expected_acres === "number" ? item.expected_acres : null;
+          const minAcres =
+            typeof item.min_acres === "number" ? item.min_acres : null;
+          const maxAcres =
+            typeof item.max_acres === "number" ? item.max_acres : null;
+          return {
+            label: item.label,
+            value: Math.round(item.probability * 100),
+            acres: acresValue,
+            minAcres,
+            maxAcres,
+            acresDisplay: acresValue !== null ? formatAcres(acresValue) : null,
+            range:
+              minAcres !== null && maxAcres !== null
+                ? [Number(minAcres), Number(maxAcres)]
+                : null,
+            acresLabel:
+              acresValue !== null ? `${formatAcres(acresValue)} ac` : "",
+          };
+        })
+      : PLACEHOLDER_CAUSES.map((item) => ({
+          label: item.label,
+          value: item.value,
+          probability: item.value / 100,
+          acres: null,
+          minAcres: null,
+          maxAcres: null,
+          acresDisplay: null,
+          range: null,
+          acresLabel: "",
+        }));
+  const causesWithSizeData = displayedCauses.filter(
+    (cause) => typeof cause.acres === "number"
+  );
+  const hasCauseSizeData = hasPrediction && causesWithSizeData.length > 0;
+  const causeChartData = displayedCauses.map((cause) => ({
+    label: cause.label,
+    probability: cause.value,
+    probabilityLabel: `${cause.value}%`,
+    acresLabel: cause.acresDisplay,
+  }));
+  const fallbackSizeResult =
+    prediction?.size ??
+    (prediction?.predicted_size_acres != null
+      ? {
+          expected_acres: prediction.predicted_size_acres,
+          min_acres: prediction.size_min_acres ?? null,
+          max_acres: prediction.size_max_acres ?? null,
+        }
+      : null);
+  const topCauseEntry = normalizedCauses[0];
+  const sizeResult =
+    fallbackSizeResult ??
+    (topCauseEntry
+      ? {
+          expected_acres: topCauseEntry.expected_acres ?? null,
+          min_acres: topCauseEntry.min_acres ?? null,
+          max_acres: topCauseEntry.max_acres ?? null,
+        }
+      : null);
   const expectedSizeValue =
     sizeResult?.expected_acres ?? prediction?.predicted_size_acres ?? null;
   const minSizeValue =
@@ -217,27 +300,29 @@ function CauseSizeView() {
     sizeResult?.max_acres ?? prediction?.size_max_acres ?? null;
   const expectedSizeDisplay =
     expectedSizeValue !== null
-      ? formatNumber(expectedSizeValue)
-      : formatNumber(SIZE_PLACEHOLDER.expected);
+      ? formatAcres(expectedSizeValue)
+      : formatAcres(SIZE_PLACEHOLDER.expected);
   const minSizeDisplay =
     minSizeValue !== null
-      ? formatNumber(minSizeValue)
-      : formatNumber(SIZE_PLACEHOLDER.min);
+      ? formatAcres(minSizeValue)
+      : formatAcres(SIZE_PLACEHOLDER.min);
   const maxSizeDisplay =
     maxSizeValue !== null
-      ? formatNumber(maxSizeValue)
-      : formatNumber(SIZE_PLACEHOLDER.max);
+      ? formatAcres(maxSizeValue)
+      : formatAcres(SIZE_PLACEHOLDER.max);
   const causePanelTitle = hasPrediction
-    ? "Top Causes (model output)"
+    ? "Cause Probabilities & Sizes"
     : "Top 4 Causes (placeholder)";
   const causePanelSubtitle = hasPrediction
-    ? "Relative probabilities from the classifier."
+    ? "Classifier probabilities with estimated size for each cause."
     : "Relative contribution of drivers at the selected point.";
   const sizePanelTitle = hasPrediction
     ? "Predicted Fire Size"
     : "Predicted Fire Size (placeholder)";
   const sizePanelSubtitle = hasPrediction
-    ? "Outputs generated by the regression model."
+    ? `Most likely scenario${
+        topCauseEntry?.label ? ` (${topCauseEntry.label})` : ""
+      } based on regression output.`
     : "Outputs will update once the regression model is wired.";
 
   const handleMonthChange = (event) => {
@@ -310,14 +395,23 @@ function CauseSizeView() {
       const result = parsed ?? {};
       setPrediction(result);
       const causeLabel =
-        result?.cause?.label ?? result?.predicted_cause ?? "Unknown cause";
+        result?.cause?.label ??
+        result?.predicted_cause ??
+        result?.sizes_by_cause?.[0]?.label ??
+        "Unknown cause";
       const acresValue =
-        result?.size?.expected_acres ?? result?.predicted_size_acres ?? null;
+        result?.size?.expected_acres ??
+        result?.predicted_size_acres ??
+        result?.sizes_by_cause?.[0]?.expected_acres ??
+        null;
       const summaryParts = [`Likely cause: ${causeLabel}.`];
       if (acresValue !== null) {
         summaryParts.push(
-          `Estimated size ≈ ${formatNumber(acresValue)} acres.`
+          `Estimated size ≈ ${formatAcres(acresValue)} acres.`
         );
+      }
+      if (Array.isArray(result?.sizes_by_cause) && result.sizes_by_cause.length > 1) {
+        summaryParts.push("Extended cause probabilities updated.");
       }
       setStatusTitle("Prediction ready");
       setMessage(summaryParts.join(" "));
@@ -492,21 +586,81 @@ function CauseSizeView() {
               <div className="panel-title">{causePanelTitle}</div>
               <div className="panel-subtitle">{causePanelSubtitle}</div>
             </div>
-            <div className="cause-list">
-              {displayedCauses.map((cause) => (
-                <div className="cause-row" key={cause.label}>
-                  <div className="cause-copy">
-                    <div className="cause-label">{cause.label}</div>
-                    <div className="cause-bar">
-                      <div
-                        className="cause-bar-fill"
-                        style={{ width: `${cause.value}%` }}
-                      />
-                    </div>
-                  </div>
-                  <div className="cause-value">{cause.value}%</div>
-                </div>
-              ))}
+            <div className="cause-chart">
+              <ResponsiveContainer width="100%" height={170}>
+                <BarChart
+                  data={causeChartData}
+                  layout="vertical"
+                  margin={{ top: 8, right: 12, left: 12, bottom: 8 }}
+                >
+                  <defs>
+                    <linearGradient
+                      id="causeProbabilityGradient"
+                      x1="0%"
+                      y1="0%"
+                      x2="100%"
+                      y2="0%"
+                    >
+                      <stop offset="0%" stopColor="#fed7aa" />
+                      <stop offset="40%" stopColor="#fb923c" />
+                      <stop offset="100%" stopColor="#dc2626" />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid
+                    strokeDasharray="2 4"
+                    stroke="#dbeafe"
+                    horizontal={false}
+                  />
+                  <XAxis
+                    type="number"
+                    domain={[0, 100]}
+                    hide
+                  />
+                  <YAxis
+                    type="category"
+                    dataKey="label"
+                    width={100}
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fill: "#0f172a", fontSize: 12 }}
+                  />
+                  <Tooltip
+                    formatter={(value, _name, payload) => {
+                      const acres = payload?.payload?.acresLabel;
+                      const parts = [`${value}% probability`];
+                      if (acres) {
+                        parts.push(`${acres} expected size`);
+                      }
+                      return [parts.join(" | "), payload?.payload?.label];
+                    }}
+                    contentStyle={{
+                      background: "#0f172a",
+                      borderRadius: 12,
+                      border: "1px solid #2563eb",
+                      color: "#f8fafc",
+                      fontSize: 12,
+                    }}
+                  />
+                  <Bar
+                    dataKey="probability"
+                    fill="url(#causeProbabilityGradient)"
+                    radius={[0, 8, 8, 0]}
+                    barSize={18}
+                        background={{ fill: "rgba(251, 146, 60, 0.15)" }}
+                    isAnimationActive={false}
+                  >
+                    <LabelList
+                      dataKey="probabilityLabel"
+                      position="right"
+                      fill="#1d4ed8"
+                      fontSize={11}
+                    />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+              <div className="cause-chart-footnote">
+                Hover to see probability and size per cause.
+              </div>
             </div>
           </div>
 
@@ -515,9 +669,121 @@ function CauseSizeView() {
               <div className="panel-title">{sizePanelTitle}</div>
               <div className="panel-subtitle">{sizePanelSubtitle}</div>
             </div>
-            <div className="size-main">
-              <div className="size-value">{expectedSizeDisplay}</div>
-              <div className="size-label">Expected size (acres)</div>
+            <div className="size-content">
+              <div className="size-main">
+                <div className="size-value">{expectedSizeDisplay}</div>
+                <div className="size-label">Expected size (acres)</div>
+              </div>
+
+              {hasCauseSizeData && (
+                <div className="size-chart">
+                  <ResponsiveContainer width="100%" height={170}>
+                    <BarChart
+                      data={causesWithSizeData.map((cause) => ({
+                        label: cause.label,
+                        acres: Number(cause.acres),
+                        minAcres:
+                          typeof cause.minAcres === "number"
+                            ? Number(cause.minAcres)
+                            : null,
+                        maxAcres:
+                          typeof cause.maxAcres === "number"
+                            ? Number(cause.maxAcres)
+                            : null,
+                        range:
+                          cause.range && cause.range.length === 2
+                            ? cause.range
+                            : null,
+                        acresLabel: cause.acresLabel,
+                      }))}
+                      layout="vertical"
+                      margin={{ top: 8, right: 12, left: 12, bottom: 8 }}
+                    >
+                      <defs>
+                    <linearGradient
+                      id="fireSizeGradient"
+                      x1="0%"
+                      y1="0%"
+                      x2="100%"
+                      y2="0%"
+                    >
+                      <stop offset="0%" stopColor="#fff7cc" />
+                      <stop offset="40%" stopColor="#facc15" />
+                      <stop offset="100%" stopColor="#f97316" />
+                    </linearGradient>
+                      </defs>
+                      <CartesianGrid
+                        strokeDasharray="2 4"
+                        stroke="#fed7aa"
+                        horizontal={false}
+                      />
+                      <XAxis
+                        type="number"
+                        axisLine={false}
+                        tickLine={false}
+                        tickFormatter={formatAcres}
+                        tick={{ fill: "#7c2d12", fontSize: 11 }}
+                      />
+                      <YAxis
+                        type="category"
+                        dataKey="label"
+                        width={90}
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{ fill: "#7f1d1d", fontSize: 12 }}
+                      />
+                      <Tooltip
+                        formatter={(value, _name, payload) => {
+                          if (value === null || value === undefined) {
+                            return ["N/A", "Expected"];
+                          }
+                          const min = payload?.payload?.minAcres ?? null;
+                          const max = payload?.payload?.maxAcres ?? null;
+                          const parts = [`${formatAcres(value)} acres`];
+                          if (min !== null && max !== null) {
+                            parts.push(
+                              `Range: ${formatAcres(min)} - ${formatAcres(max)}`
+                            );
+                          }
+                          return [parts.join(" | "), payload?.payload?.label];
+                        }}
+                        contentStyle={{
+                          background: "#1c1917",
+                          borderRadius: 12,
+                          border: "1px solid #fb923c",
+                          color: "#f8fafc",
+                          fontSize: 12,
+                        }}
+                      />
+                      <Bar
+                        dataKey="acres"
+                        fill="url(#fireSizeGradient)"
+                        radius={[0, 8, 8, 0]}
+                        isAnimationActive={false}
+                        barSize={20}
+                        background={{ fill: "rgba(251, 146, 60, 0.15)" }}
+                      />
+                      <LabelList
+                        dataKey="acresLabel"
+                        position="right"
+                        fill="#7c2d12"
+                        fontSize={11}
+                        formatter={(value) => value || ""}
+                      />
+                      <ErrorBar
+                        dataKey="range"
+                        width={8}
+                        stroke="#92400e"
+                        strokeWidth={2}
+                        direction="x"
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                  <div className="size-chart-footnote">
+                    Bars show the estimated size for each cause scenario.
+                  </div>
+                </div>
+              )}
             </div>
             <div className="grid-two">
               <div className="metric">
