@@ -29,6 +29,60 @@ const MONTHS = [
   "December",
 ];
 
+const STATES = [
+  { label: "Alabama", value: "AL" },
+  { label: "Alaska", value: "AK" },
+  { label: "Arizona", value: "AZ" },
+  { label: "Arkansas", value: "AR" },
+  { label: "California", value: "CA" },
+  { label: "Colorado", value: "CO" },
+  { label: "Connecticut", value: "CT" },
+  { label: "Delaware", value: "DE" },
+  { label: "District of Columbia", value: "DC" },
+  { label: "Florida", value: "FL" },
+  { label: "Georgia", value: "GA" },
+  { label: "Hawaii", value: "HI" },
+  { label: "Idaho", value: "ID" },
+  { label: "Illinois", value: "IL" },
+  { label: "Indiana", value: "IN" },
+  { label: "Iowa", value: "IA" },
+  { label: "Kansas", value: "KS" },
+  { label: "Kentucky", value: "KY" },
+  { label: "Louisiana", value: "LA" },
+  { label: "Maine", value: "ME" },
+  { label: "Maryland", value: "MD" },
+  { label: "Massachusetts", value: "MA" },
+  { label: "Michigan", value: "MI" },
+  { label: "Minnesota", value: "MN" },
+  { label: "Mississippi", value: "MS" },
+  { label: "Missouri", value: "MO" },
+  { label: "Montana", value: "MT" },
+  { label: "Nebraska", value: "NE" },
+  { label: "Nevada", value: "NV" },
+  { label: "New Hampshire", value: "NH" },
+  { label: "New Jersey", value: "NJ" },
+  { label: "New Mexico", value: "NM" },
+  { label: "New York", value: "NY" },
+  { label: "North Carolina", value: "NC" },
+  { label: "North Dakota", value: "ND" },
+  { label: "Ohio", value: "OH" },
+  { label: "Oklahoma", value: "OK" },
+  { label: "Oregon", value: "OR" },
+  { label: "Pennsylvania", value: "PA" },
+  { label: "Rhode Island", value: "RI" },
+  { label: "South Carolina", value: "SC" },
+  { label: "South Dakota", value: "SD" },
+  { label: "Tennessee", value: "TN" },
+  { label: "Texas", value: "TX" },
+  { label: "Utah", value: "UT" },
+  { label: "Vermont", value: "VT" },
+  { label: "Virginia", value: "VA" },
+  { label: "Washington", value: "WA" },
+  { label: "West Virginia", value: "WV" },
+  { label: "Wisconsin", value: "WI" },
+  { label: "Wyoming", value: "WY" },
+];
+
 const PLACEHOLDER_CAUSES = [
   { label: "Lightning Strike", value: 37 },
   { label: "Human Activity", value: 34 },
@@ -84,21 +138,34 @@ function useMockFrequencyData() {
 function CauseSizeView() {
   const [coords, setCoords] = useState(null);
   const [monthIndex, setMonthIndex] = useState(0);
+  const [stateCode, setStateCode] = useState("");
   const [message, setMessage] = useState(
-    "Select a month and click on the map to choose a location."
+    "Select a state and month, then click on the map to choose a location."
   );
   const selectedLocation = coords
     ? `${coords.lat.toFixed(2)}°, ${coords.lng.toFixed(2)}°`
     : "Tap anywhere on the map";
+  const selectedState = STATES.find((item) => item.value === stateCode);
+  const stateDisplay = selectedState
+    ? `${selectedState.label} (${selectedState.value})`
+    : "Select a state";
   const statusTitle = coords ? "Location captured" : "Awaiting selection";
 
   const handleRunPrediction = () => {
+    if (!stateCode) {
+      setMessage("Select a state from the dropdown first.");
+      return;
+    }
     if (!coords) {
       setMessage("Select a location on the map first.");
       return;
     }
     setMessage(
-      "Backend not connected. Cause and size predictions will appear here once API is available."
+      `Payload ready -> month=${MONTHS[monthIndex]}, state=${stateCode}, lat=${coords.lat.toFixed(
+        4
+      )}, lon=${coords.lng.toFixed(
+        4
+      )}. Backend not connected. Cause and size predictions will appear here once the API is available.`
     );
   };
 
@@ -118,10 +185,24 @@ function CauseSizeView() {
             ))}
           </select>
         </div>
+        <div className="control-card">
+          <label className="label">Select State</label>
+          <select
+            value={stateCode}
+            onChange={(e) => setStateCode(e.target.value)}
+          >
+            <option value="">Choose a state</option>
+            {STATES.map((state) => (
+              <option key={state.value} value={state.value}>
+                {state.label}
+              </option>
+            ))}
+          </select>
+        </div>
         <div className="control-card instructions">
           <div className="label">How to use</div>
           <ol>
-            <li>Select a month.</li>
+            <li>Select a state and month.</li>
             <li>Click anywhere on the map.</li>
             <li>Click "Run Prediction".</li>
           </ol>
@@ -130,7 +211,11 @@ function CauseSizeView() {
           <div className="label">Selected Location</div>
           <div className="location-value">{selectedLocation}</div>
           <div className="location-sub">
-            {coords ? `Month: ${MONTHS[monthIndex]}` : "Awaiting a selected point"}
+            Month: {MONTHS[monthIndex]}
+          </div>
+          <div className="location-sub">State: {stateDisplay}</div>
+          <div className="location-sub">
+            {coords ? "Location ready" : "Awaiting a selected point"}
           </div>
         </div>
       </div>
@@ -144,7 +229,9 @@ function CauseSizeView() {
                 Click on the map to select a location.
               </div>
             </div>
-            <div className="panel-pill">{selectedLocation}</div>
+            <div className="panel-pill">
+              {coords ? `${selectedLocation} | ${stateDisplay}` : stateDisplay}
+            </div>
           </div>
           <MapContainer
             center={[37.5, -119.5]}
@@ -159,10 +246,13 @@ function CauseSizeView() {
             <LocationPicker
               onSelect={(c) => {
                 setCoords(c);
+                const stateText = stateCode
+                  ? stateDisplay
+                  : "no state selected";
                 setMessage(
                   `Selected ${MONTHS[monthIndex]} location: ${c.lat.toFixed(
                     4
-                  )}, ${c.lng.toFixed(4)}`
+                  )}, ${c.lng.toFixed(4)}; State: ${stateText}`
                 );
               }}
             />
@@ -174,7 +264,7 @@ function CauseSizeView() {
             <div className="panel-header">
               <div className="panel-title">Prediction Panel</div>
               <div className="panel-subtitle">
-                Month: {MONTHS[monthIndex]}
+                Month: {MONTHS[monthIndex]} | State: {stateDisplay}
               </div>
             </div>
             <div className="grid-two">
@@ -190,6 +280,10 @@ function CauseSizeView() {
                   {coords ? coords.lng.toFixed(4) : "—"}
                 </div>
               </div>
+            </div>
+            <div className="field">
+              <div className="label">State</div>
+              <div className="field-value">{stateDisplay}</div>
             </div>
             <button className="primary-btn" onClick={handleRunPrediction}>
               Run Prediction
