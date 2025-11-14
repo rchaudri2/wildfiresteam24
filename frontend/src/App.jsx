@@ -83,6 +83,26 @@ const STATES = [
   { label: "Wyoming", value: "WY" },
 ];
 
+const MAP_STYLES = [
+  {
+    id: "political",
+    label: "Political",
+    hint: "Shows political boundaries and roads for easier state identification.",
+    url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    attribution: "&copy; OpenStreetMap contributors",
+  },
+  {
+    id: "terrain",
+    label: "Terrain",
+    hint: "Highlights elevation and landforms for context.",
+    url: "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
+    attribution:
+      'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, SRTM | Map style: &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)',
+  },
+];
+
+const DEFAULT_MAP_STYLE = MAP_STYLES[0];
+
 const PLACEHOLDER_CAUSES = [
   { label: "Lightning Strike", value: 37 },
   { label: "Human Activity", value: 34 },
@@ -139,6 +159,7 @@ function CauseSizeView() {
   const [coords, setCoords] = useState(null);
   const [monthIndex, setMonthIndex] = useState(0);
   const [stateCode, setStateCode] = useState("");
+  const [mapStyle, setMapStyle] = useState(DEFAULT_MAP_STYLE.id);
   const [message, setMessage] = useState(
     "Select a state and month, then click on the map to choose a location."
   );
@@ -149,6 +170,8 @@ function CauseSizeView() {
   const stateDisplay = selectedState
     ? `${selectedState.label} (${selectedState.value})`
     : "Select a state";
+  const activeMapStyle =
+    MAP_STYLES.find((style) => style.id === mapStyle) ?? DEFAULT_MAP_STYLE;
   const statusTitle = coords ? "Location captured" : "Awaiting selection";
 
   const handleRunPrediction = () => {
@@ -199,10 +222,29 @@ function CauseSizeView() {
             ))}
           </select>
         </div>
+        <div className="control-card">
+          <label className="label">Map Style</label>
+          <div className="map-toggle">
+            {MAP_STYLES.map((style) => (
+              <button
+                key={style.id}
+                type="button"
+                className={
+                  mapStyle === style.id ? "nav-btn active" : "nav-btn"
+                }
+                onClick={() => setMapStyle(style.id)}
+              >
+                {style.label}
+              </button>
+            ))}
+          </div>
+          <div className="location-sub">{activeMapStyle.hint}</div>
+        </div>
         <div className="control-card instructions">
           <div className="label">How to use</div>
           <ol>
             <li>Select a state and month.</li>
+            <li>Use the map style toggle if you need clearer borders.</li>
             <li>Click anywhere on the map.</li>
             <li>Click "Run Prediction".</li>
           </ol>
@@ -226,7 +268,8 @@ function CauseSizeView() {
             <div>
               <div className="panel-title">US Wildfire Risk Map</div>
               <div className="panel-subtitle">
-                Click on the map to select a location.
+                Click on the map to select a location. Use the map style toggle
+                if you need clearer state outlines.
               </div>
             </div>
             <div className="panel-pill">
@@ -240,8 +283,9 @@ function CauseSizeView() {
             scrollWheelZoom={true}
           >
             <TileLayer
-              url="https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png"
-              attribution='Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, SRTM | Map style: &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)'
+              key={activeMapStyle.id}
+              url={activeMapStyle.url}
+              attribution={activeMapStyle.attribution}
             />
             <LocationPicker
               onSelect={(c) => {

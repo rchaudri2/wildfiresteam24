@@ -107,6 +107,13 @@ html,
   margin-top: 6px;
 }
 
+.map-toggle {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
 .year-card {
   position: relative;
   overflow: hidden;
